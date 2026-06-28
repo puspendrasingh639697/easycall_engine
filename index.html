@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>📞 EasyCall - Working</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #1a1a2e; color: #eee; }
+        .container { max-width: 600px; margin: 0 auto; background: #16213e; padding: 25px; border-radius: 15px; }
+        .status-box { background: #0f3460; padding: 15px; border-radius: 10px; margin: 10px 0; }
+        .status-item { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #1a1a2e; }
+        .green { color: #4ec9b0; }
+        .red { color: #f48771; }
+        .yellow { color: #d7ba7d; }
+        button { padding: 12px 25px; margin: 5px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn-call { background: #4ec9b0; color: #1a1a2e; }
+        .btn-answer { background: #569cd6; color: #1a1a2e; }
+        .btn-hangup { background: #f48771; color: #1a1a2e; }
+        .btn-test { background: #d7ba7d; color: #1a1a2e; }
+        .btn-register { background: #4ec9b0; color: #1a1a2e; }
+        input { padding: 10px; border: none; border-radius: 8px; background: #0f3460; color: #eee; margin: 5px; width: 40%; }
+        audio { width: 100%; margin: 10px 0; border-radius: 8px; background: #0a0a1a; }
+        .log-box { background: #0a0a1a; padding: 10px; border-radius: 10px; height: 150px; overflow-y: auto; font-family: monospace; font-size: 12px; margin-top: 10px; }
+        .instructions { background: #0f3460; padding: 10px; border-radius: 8px; margin: 10px 0; border-left: 4px solid #4ec9b0; }
+        #audioLevel { width: 100%; height: 20px; background: #0a0a1a; border-radius: 8px; margin: 10px 0; overflow: hidden; }
+        #audioBar { width: 0%; height: 100%; background: #4ec9b0; transition: width 0.1s; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📞 EasyCall - Working</h1>
+    
+    <div class="instructions">
+        ⚡ <strong>INSTRUCTIONS:</strong><br>
+        1️⃣ Open this page in <strong>TWO tabs</strong><br>
+        2️⃣ Tab 1: <strong>user1</strong> | Tab 2: <strong>user2</strong><br>
+        3️⃣ Click <strong>"Register"</strong> in both tabs<br>
+        4️⃣ Click <strong>"Start Call"</strong> from user1<br>
+        5️⃣ Auto-answer in 1 second<br>
+        6️⃣ <strong>🎉 Audio should play!</strong>
+    </div>
+    
+    <div class="status-box">
+        <div class="status-item">
+            <span>👤 User:</span>
+            <span id="userDisplay" class="red">❌ Not registered</span>
+        </div>
+        <div class="status-item">
+            <span>📞 Call:</span>
+            <span id="callDisplay" class="red">⏸️ Idle</span>
+        </div>
+        <div class="status-item">
+            <span>🔊 Audio:</span>
+            <span id="audioDisplay" class="red">🔇 No audio</span>
+        </div>
+    </div>
+
+    <!-- Audio Level Visualizer -->
+    <div id="audioLevel">
+        <div id="audioBar"></div>
+    </div>
+
+    <div>
+        <input type="text" id="userId" placeholder="Your ID" value="user1">
+        <input type="text" id="targetId" placeholder="Target ID" value="user2">
+    </div>
+
+    <div>
+        <button class="btn-register" id="registerBtn">📝 Register</button>
+        <button class="btn-call" id="callBtn">📞 Start Call</button>
+        <button class="btn-answer" id="answerBtn">✅ Answer</button>
+        <button class="btn-hangup" id="hangupBtn">❌ Hang Up</button>
+        <button class="btn-test" id="testBtn">🎤 Test Mic</button>
+    </div>
+
+    <audio id="remoteAudio" controls autoplay></audio>
+
+    <div class="log-box" id="log">
+        <div>📝 EasyCall Test Started</div>
+        <div>💡 Click "Register" to register user</div>
+    </div>
+</div>
+
+<script type="importmap">
+{
+    "imports": {
+        "socket.io-client": "./node_modules/socket.io-client/dist/socket.io.esm.min.js"
+    }
+}
+</script>
+
+<script type="module">
+import { io } from 'socket.io-client';
+import { EasyCall } from './src/EasyCall.js';
+
+// ===== DOM Elements =====
+const logEl = document.getElementById('log');
+const userDisplay = document.getElementById('userDisplay');
+const callDisplay = document.getElementById('callDisplay');
+const audioDisplay = document.getElementById('audioDisplay');
+const remoteAudio = document.getElementById('remoteAudio');
+const audioBar = document.getElementById('audioBar');
+
+// ===== Logger =====
+function log(msg, type = 'info') {
+    const time = new Date().toLocaleTimeString();
+    logEl.innerHTML += `<div>[${time}] ${msg}</div>`;
+    logEl.scrollTop = logEl.scrollHeight;
+    console.log(`[${time}] ${msg}`);
+}
+
+// ===== Audio Visualizer =====
+function setupAudioVisualizer(stream) {
+    try {
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        
+        function updateLevel() {
+            const data = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(data);
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            const percent = Math.min((avg / 255) * 100, 100);
+            audioBar.style.width = percent + '%';
+            
+            // Change color based on level
+            if (percent > 50) {
+                audioBar.style.background = '#4ec9b0';
+            } else if (percent > 20) {
+                audioBar.style.background = '#d7ba7d';
+            } else {
+                audioBar.style.background = '#f48771';
+            }
+            
+            requestAnimationFrame(updateLevel);
+        }
+        updateLevel();
+        log('✅ Audio visualizer started', 'success');
+    } catch (e) {
+        log('⚠️ Visualizer error: ' + e.message, 'warn');
+    }
+}
+
+// ===== Variables =====
+let call = null;
+let localStream = null;
+let isRegistered = false;
+
+// ===== Initialize =====
+async function initCall() {
+    if (call) {
+        call.hangup();
+    }
+    
+    call = new EasyCall('http://localhost:3000');
+    
+    // ============================================================
+    // ✅ ✅ ✅ FIX: Remote Audio - Force Play!
+    // ============================================================
+    call.onRemoteAudio((stream) => {
+        log('🔊 Remote audio received!', 'success');
+        audioDisplay.textContent = '🔊 Playing';
+        audioDisplay.style.color = '#4ec9b0';
+        
+        // ✅ Attach stream
+        remoteAudio.srcObject = stream;
+        remoteAudio.volume = 1.0;
+        remoteAudio.muted = false;
+        
+        // ✅ Force play
+        remoteAudio.play()
+            .then(() => {
+                log('✅ Audio playing!', 'success');
+                audioDisplay.textContent = '🔊 Playing';
+                audioDisplay.style.color = '#4ec9b0';
+            })
+            .catch(err => {
+                log('⚠️ Play error: ' + err.message, 'warn');
+                // Retry after 500ms
+                setTimeout(() => {
+                    remoteAudio.play()
+                        .then(() => {
+                            log('✅ Audio playing (retry)!', 'success');
+                            audioDisplay.textContent = '🔊 Playing';
+                            audioDisplay.style.color = '#4ec9b0';
+                        });
+                }, 500);
+            });
+        
+        // ✅ Start visualizer
+        setupAudioVisualizer(stream);
+    });
+    // ============================================================
+    // ✅ ✅ ✅ FIX END
+    // ============================================================
+    
+    // Incoming call
+    call.onIncomingCall((data) => {
+        log(`📞 Incoming call from: ${data.from}`, 'warn');
+        callDisplay.textContent = '📞 Incoming...';
+        callDisplay.style.color = '#d7ba7d';
+        
+        setTimeout(() => {
+            call.answerCall(data.from);
+            log('✅ Call answered', 'success');
+            callDisplay.textContent = '🎙️ Connected';
+            callDisplay.style.color = '#4ec9b0';
+        }, 1000);
+    });
+    
+    // Socket events
+    call.socket.on('registered', (data) => {
+        isRegistered = true;
+        userDisplay.textContent = `✅ ${data.userId}`;
+        userDisplay.style.color = '#4ec9b0';
+        log(`✅ Registered as: ${data.userId}`, 'success');
+    });
+    
+    call.socket.on('call-answer', () => {
+        callDisplay.textContent = '🎙️ Connected';
+        callDisplay.style.color = '#4ec9b0';
+        log('✅ Call connected!', 'success');
+    });
+    
+    call.socket.on('error', (data) => {
+        log(`❌ Error: ${data.message}`, 'error');
+        if (data.message === 'User offline') {
+            callDisplay.textContent = '❌ User offline';
+            callDisplay.style.color = '#f48771';
+        }
+    });
+    
+    call.socket.on('disconnect', () => {
+        isRegistered = false;
+        userDisplay.textContent = '❌ Disconnected';
+        userDisplay.style.color = '#f48771';
+        log('❌ Disconnected', 'error');
+    });
+    
+    // ✅ Register button
+    document.getElementById('registerBtn').addEventListener('click', () => {
+        const userId = document.getElementById('userId').value;
+        log(`📝 Registering: ${userId}`, 'info');
+        call.socket.emit('register', userId);
+    });
+}
+
+// ===== Start Call =====
+window.startCall = async function() {
+    try {
+        const target = document.getElementById('targetId').value;
+        
+        if (!isRegistered) {
+            log('❌ Please register first! Click "Register"', 'error');
+            return;
+        }
+        
+        log(`📞 Starting call to: ${target}`, 'info');
+        callDisplay.textContent = '📞 Calling...';
+        callDisplay.style.color = '#d7ba7d';
+        
+        if (!localStream) {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            call.addAudioStream(localStream);
+            log('✅ Microphone connected', 'success');
+        }
+        
+        await call.startCall(target);
+        log('✅ Call initiated', 'success');
+    } catch (err) {
+        log(`❌ Call error: ${err.message}`, 'error');
+        callDisplay.textContent = '❌ Failed';
+        callDisplay.style.color = '#f48771';
+    }
+};
+
+// ===== Answer Call =====
+window.answerCall = async function() {
+    try {
+        const target = document.getElementById('targetId').value;
+        log(`✅ Answering call`, 'info');
+        
+        if (!localStream) {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            call.addAudioStream(localStream);
+        }
+        
+        await call.answerCall(target);
+        callDisplay.textContent = '🎙️ Connected';
+        callDisplay.style.color = '#4ec9b0';
+        log('✅ Call answered', 'success');
+    } catch (err) {
+        log(`❌ Answer error: ${err.message}`, 'error');
+    }
+};
+
+// ===== Hangup =====
+window.hangup = function() {
+    if (call) {
+        call.hangup();
+        remoteAudio.srcObject = null;
+        audioBar.style.width = '0%';
+        callDisplay.textContent = '⏸️ Idle';
+        callDisplay.style.color = '#f48771';
+        audioDisplay.textContent = '🔇 No audio';
+        audioDisplay.style.color = '#f48771';
+        log('📞 Call ended', 'info');
+    }
+};
+
+// ===== Test Mic =====
+window.testMic = function() {
+    log('🎤 Testing microphone...', 'info');
+    navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+            log('✅ Microphone working!', 'success');
+            const audioContext = new AudioContext();
+            const source = audioContext.createMediaStreamSource(stream);
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            
+            let count = 0;
+            function checkLevel() {
+                const data = new Uint8Array(analyser.frequencyBinCount);
+                analyser.getByteFrequencyData(data);
+                const hasAudio = data.some(v => v > 10);
+                if (hasAudio) {
+                    log('🎤 Speaking!', 'success');
+                }
+                count++;
+                if (count < 50) requestAnimationFrame(checkLevel);
+                else stream.getTracks().forEach(t => t.stop());
+            }
+            checkLevel();
+        })
+        .catch(err => log(`❌ Mic error: ${err.message}`, 'error'));
+};
+
+// ===== Buttons =====
+document.getElementById('callBtn').addEventListener('click', window.startCall);
+document.getElementById('answerBtn').addEventListener('click', window.answerCall);
+document.getElementById('hangupBtn').addEventListener('click', window.hangup);
+document.getElementById('testBtn').addEventListener('click', window.testMic);
+
+// ===== Initialize =====
+log('🔄 Initializing...', 'info');
+await initCall();
+
+log('📝 ===== INSTRUCTIONS =====', 'info');
+log('1️⃣ Click "Register" to register user', 'info');
+log('2️⃣ Open in TWO tabs', 'info');
+log('3️⃣ Tab 1: user1, Tab 2: user2', 'info');
+log('4️⃣ Both tabs: Click "Register"', 'info');
+log('5️⃣ Tab 1: Click "Start Call"', 'info');
+log('6️⃣ Tab 2: Auto-answer', 'info');
+log('7️⃣ Audio visualizer shows green bars!', 'info');
+log('📝 ========================', 'info');
+
+window.call = call;
+</script>
+</body>
+</html>
